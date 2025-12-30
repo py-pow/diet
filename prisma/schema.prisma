@@ -1,0 +1,1058 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ORGANIZATION_OWNER
+  DIETITIAN
+  ASSISTANT
+  PATIENT
+}
+
+enum OrganizationStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  BANK_TRANSFER
+  IYZICO
+  STRIPE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentType {
+  IN_PERSON
+  VIDEO_CALL
+  PHONE_CALL
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+}
+
+enum ConsentType {
+  KVKK_EXPLICIT
+  KVKK_SENSITIVE
+  MARKETING
+  DATA_SHARING
+}
+
+enum ConsentStatus {
+  GRANTED
+  REVOKED
+}
+
+enum DataAccessReason {
+  TREATMENT
+  REPORTING
+  EXPORT
+  SUPPORT
+  AUDIT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum ActivityLevel {
+  SEDENTARY
+  LIGHTLY_ACTIVE
+  MODERATELY_ACTIVE
+  VERY_ACTIVE
+  EXTREMELY_ACTIVE
+}
+
+enum DietPlanStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum MealType {
+  BREAKFAST
+  MORNING_SNACK
+  LUNCH
+  AFTERNOON_SNACK
+  DINNER
+  EVENING_SNACK
+}
+
+enum LabTestType {
+  BLOOD_TEST
+  URINE_TEST
+  THYROID
+  VITAMIN
+  MINERAL
+  OTHER
+}
+
+// ============================================
+// CORE MODELS
+// ============================================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  subdomain String   @unique
+  customDomain String? @unique
+  domainVerified Boolean @default(false)
+  dnsTxtRecord String?
+
+  // Owner info
+  ownerEmail String
+  ownerName  String
+  ownerPhone String
+
+  // Status
+  status     OrganizationStatus @default(TRIAL)
+  plan       SubscriptionPlan   @default(FREE)
+
+  // Trial
+  trialEndsAt DateTime?
+
+  // Subscription
+  stripeCustomerId       String?
+  stripeSubscriptionId   String?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+
+  // Usage limits (based on plan)
+  maxUsers               Int @default(3)
+  maxPatients            Int @default(50)
+  maxStorage             Int @default(1073741824) // 1GB in bytes
+  maxAiQueries           Int @default(100) // per month
+
+  // Current usage
+  currentUsers           Int @default(0)
+  currentPatients        Int @default(0)
+  currentStorage         Int @default(0)
+  currentAiQueries       Int @default(0)
+  aiQueriesResetAt       DateTime @default(now())
+
+  // Settings
+  settings               OrganizationSettings?
+  branding               OrganizationBranding?
+
+  // Relations
+  users                  User[]
+  patients               Patient[]
+  dietPlans              DietPlan[]
+  appointments           Appointment[]
+  messages               Message[]
+  payments               Payment[]
+  invoices               Invoice[]
+  aiQueryLogs            AiQueryLog[]
+  consentRecords         ConsentRecord[]
+  dataAccessLogs         DataAccessLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subdomain])
+  @@index([customDomain])
+  @@index([status])
+}
+
+model OrganizationSettings {
+  id             String @id @default(cuid())
+  organizationId String @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // General
+  timezone       String @default("Europe/Istanbul")
+  language       String @default("tr")
+  currency       String @default("TRY")
+
+  // Business hours
+  workingDays    Json // ["monday", "tuesday", ...]
+  workingHours   Json // { "start": "09:00", "end": "18:00" }
+
+  // Appointment
+  appointmentDuration Int @default(30) // minutes
+  bufferTime          Int @default(0)  // minutes between appointments
+  allowOnlineBooking  Boolean @default(true)
+  requireApproval     Boolean @default(false)
+
+  // Notifications
+  emailNotifications  Boolean @default(true)
+  smsNotifications    Boolean @default(false)
+  whatsappNotifications Boolean @default(false)
+
+  // Features
+  enableAiDietPlans   Boolean @default(true)
+  enableVideoConsult  Boolean @default(false)
+  enablePatientPortal Boolean @default(true)
+
+  // KVKK
+  kvkkContactEmail    String?
+  kvkkContactPhone    String?
+  dataRetentionDays   Int @default(3650) // 10 years
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrganizationBranding {
+  id             String @id @default(cuid())
+  organizationId String @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Logo & colors
+  logoUrl        String?
+  faviconUrl     String?
+  primaryColor   String @default("#10b981")
+  secondaryColor String @default("#3b82f6")
+  accentColor    String @default("#8b5cf6")
+
+  // Text
+  companyName    String?
+  tagline        String?
+  description    String?
+
+  // Contact
+  email          String?
+  phone          String?
+  address        String?
+  website        String?
+
+  // Social media
+  facebook       String?
+  instagram      String?
+  twitter        String?
+  linkedin       String?
+
+  // Custom CSS
+  customCss      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  password       String
+
+  // Profile
+  firstName      String
+  lastName       String
+  phone          String?
+  avatar         String?
+
+  // Turkish citizen info (KVKK requirement)
+  tcKimlikNo     String?  @unique
+  birthDate      DateTime?
+  gender         Gender?
+
+  // Address (KVKK requirement)
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  district       String?
+  postalCode     String?
+  country        String   @default("Turkey")
+
+  // Role & organization
+  role           UserRole
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Email verification
+  emailVerified  Boolean  @default(false)
+  emailVerifiedAt DateTime?
+  emailVerificationToken String?
+  emailVerificationExpires DateTime?
+
+  // Password reset
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+
+  // Registration tracking (KVKK requirement)
+  registrationIp       String?
+  registrationBrowser  String?
+  registrationDevice   String?
+  registrationOs       String?
+
+  // Login tracking
+  lastLoginAt          DateTime?
+  lastLoginIp          String?
+  lastLoginBrowser     String?
+  lastLoginDevice      String?
+  lastLoginOs          String?
+
+  // Security
+  failedLoginAttempts  Int      @default(0)
+  lockedUntil          DateTime?
+  twoFactorEnabled     Boolean  @default(false)
+  twoFactorSecret      String?
+
+  // Status
+  isActive             Boolean  @default(true)
+
+  // Relations
+  sessions             UserSession[]
+  patients             Patient[]
+  dietPlans            DietPlan[]
+  appointments         Appointment[]
+  sentMessages         Message[] @relation("SentMessages")
+  receivedMessages     Message[] @relation("ReceivedMessages")
+  auditLogs            AdminAuditLog[]
+  dataAccessLogs       DataAccessLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([organizationId])
+  @@index([role])
+  @@index([tcKimlikNo])
+}
+
+model UserSession {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Token
+  refreshToken   String   @unique
+  accessToken    String?
+
+  // Device info
+  ipAddress      String
+  userAgent      String
+  browser        String?
+  device         String?
+  os             String?
+
+  // Location (from IP)
+  country        String?
+  city           String?
+
+  // Status
+  isValid        Boolean  @default(true)
+  lastActivityAt DateTime @default(now())
+  expiresAt      DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([refreshToken])
+  @@index([expiresAt])
+}
+
+model Patient {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Assigned dietitian
+  dietitianId    String
+  dietitian      User     @relation(fields: [dietitianId], references: [id])
+
+  // Personal info
+  email          String
+  firstName      String
+  lastName       String
+  phone          String
+
+  // Turkish citizen info (KVKK requirement)
+  tcKimlikNo     String   @unique
+  birthDate      DateTime
+  gender         Gender
+
+  // Address (KVKK requirement)
+  addressLine1   String
+  addressLine2   String?
+  city           String
+  district       String
+  postalCode     String
+  country        String   @default("Turkey")
+
+  // Health info
+  height         Float?   // cm
+  initialWeight  Float?   // kg
+  currentWeight  Float?   // kg
+  targetWeight   Float?   // kg
+  bloodType      String?
+
+  // Lifestyle
+  activityLevel  ActivityLevel?
+  occupation     String?
+  smokingStatus  Boolean  @default(false)
+  alcoholStatus  Boolean  @default(false)
+
+  // Medical history
+  medicalHistory Json?    // { conditions: [], allergies: [], medications: [] }
+
+  // Emergency contact
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  emergencyContactRelation String?
+
+  // Registration tracking (KVKK requirement)
+  registrationIp       String
+  registrationBrowser  String?
+  registrationDevice   String?
+  registrationOs       String?
+
+  // Status
+  isActive       Boolean  @default(true)
+
+  // Relations
+  dietPlans      DietPlan[]
+  appointments   Appointment[]
+  messages       Message[]
+  weightLogs     WeightLog[]
+  foodLogs       FoodLog[]
+  labResults     LabResult[]
+  consentRecords ConsentRecord[]
+
+  // Notes (internal - only for dietitian)
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([dietitianId])
+  @@index([tcKimlikNo])
+  @@index([email])
+}
+
+// ============================================
+// CONSENT & KVKK
+// ============================================
+
+model ConsentRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  patientId      String
+  patient        Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  type           ConsentType
+  status         ConsentStatus @default(GRANTED)
+
+  // Consent text (versioned)
+  consentText    String
+  consentVersion String
+
+  // Tracking
+  ipAddress      String
+  userAgent      String
+
+  // Status
+  grantedAt      DateTime @default(now())
+  revokedAt      DateTime?
+  expiresAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+  @@index([organizationId])
+  @@index([type])
+}
+
+model DataAccessLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+
+  // What was accessed
+  resourceType   String   // "patient", "dietPlan", "labResult", etc.
+  resourceId     String
+
+  // Why
+  reason         DataAccessReason
+  reasonDetails  String?
+
+  // How
+  action         String   // "view", "create", "update", "delete", "export"
+  ipAddress      String
+  userAgent      String
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+}
+
+// ============================================
+// DIET PLANS & MEALS
+// ============================================
+
+model Food {
+  id          String   @id @default(cuid())
+
+  // Basic info
+  name        String
+  nameTr      String   // Turkish name
+  nameEn      String?  // English name
+
+  // Category
+  category    String   // "protein", "carb", "fat", "vegetable", "fruit", etc.
+  subcategory String?
+
+  // Nutrition per 100g
+  calories    Float
+  protein     Float    // g
+  carbs       Float    // g
+  fat         Float    // g
+  fiber       Float?   // g
+  sugar       Float?   // g
+  sodium      Float?   // mg
+
+  // Micronutrients (optional)
+  vitaminA    Float?
+  vitaminC    Float?
+  vitaminD    Float?
+  calcium     Float?
+  iron        Float?
+
+  // Serving
+  servingSize Float    @default(100) // g or ml
+  servingUnit String   @default("g") // "g", "ml", "piece", "cup", etc.
+
+  // Flags
+  isCommon    Boolean  @default(true)
+  isVegetarian Boolean @default(false)
+  isVegan     Boolean  @default(false)
+  isGlutenFree Boolean @default(false)
+  isDairyFree Boolean @default(false)
+
+  // Relations
+  mealFoods   MealFood[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([name])
+}
+
+model DietPlan {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  patientId      String
+  patient        Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  dietitianId    String
+  dietitian      User     @relation(fields: [dietitianId], references: [id])
+
+  // Plan info
+  name           String
+  description    String?
+
+  // Targets
+  targetCalories Int      // kcal per day
+  targetProtein  Float?   // g per day
+  targetCarbs    Float?   // g per day
+  targetFat      Float?   // g per day
+
+  // Duration
+  startDate      DateTime
+  endDate        DateTime
+
+  // Status
+  status         DietPlanStatus @default(DRAFT)
+
+  // AI generated
+  isAiGenerated  Boolean  @default(false)
+  aiPrompt       String?
+  aiModel        String?  // "gpt-4", "claude-3", etc.
+
+  // Relations
+  meals          Meal[]
+
+  // Notes
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([patientId])
+  @@index([dietitianId])
+  @@index([status])
+}
+
+model Meal {
+  id         String   @id @default(cuid())
+  dietPlanId String
+  dietPlan   DietPlan @relation(fields: [dietPlanId], references: [id], onDelete: Cascade)
+
+  // Meal info
+  type       MealType
+  name       String?  // Optional custom name
+  time       String?  // "08:00", "12:30", etc.
+
+  // Day (1-7 for weekly plan, or date)
+  day        Int?     // 1 = Monday, 7 = Sunday
+  date       DateTime?
+
+  // Order
+  order      Int      @default(0)
+
+  // Relations
+  foods      MealFood[]
+
+  // Notes
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dietPlanId])
+  @@index([type])
+}
+
+model MealFood {
+  id       String @id @default(cuid())
+  mealId   String
+  meal     Meal   @relation(fields: [mealId], references: [id], onDelete: Cascade)
+
+  foodId   String
+  food     Food   @relation(fields: [foodId], references: [id])
+
+  // Amount
+  amount   Float  // quantity
+  unit     String // "g", "ml", "piece", "cup", etc.
+
+  // Calculated nutrition
+  calories Float
+  protein  Float
+  carbs    Float
+  fat      Float
+
+  // Order
+  order    Int    @default(0)
+
+  // Notes
+  notes    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([mealId])
+  @@index([foodId])
+}
+
+// ============================================
+// APPOINTMENTS & MESSAGES
+// ============================================
+
+model Appointment {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  patientId      String
+  patient        Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  dietitianId    String
+  dietitian      User     @relation(fields: [dietitianId], references: [id])
+
+  // Appointment info
+  title          String
+  description    String?
+  type           AppointmentType
+
+  // Time
+  startTime      DateTime
+  endTime        DateTime
+  duration       Int      // minutes
+
+  // Status
+  status         AppointmentStatus @default(SCHEDULED)
+
+  // Video call
+  videoCallUrl   String?
+  videoCallId    String?
+
+  // Location (for in-person)
+  location       String?
+
+  // Reminders
+  reminderSent   Boolean  @default(false)
+  reminderSentAt DateTime?
+
+  // Notes
+  notes          String?
+  patientNotes   String?  // Notes from patient
+
+  // Cancellation
+  cancelledAt    DateTime?
+  cancelledBy    String?  // userId
+  cancelReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([patientId])
+  @@index([dietitianId])
+  @@index([startTime])
+  @@index([status])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Sender
+  senderId       String
+  sender         User     @relation("SentMessages", fields: [senderId], references: [id])
+
+  // Receiver
+  receiverId     String
+  receiver       User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+
+  // Patient context (optional)
+  patientId      String?
+  patient        Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  // Message
+  subject        String?
+  body           String
+
+  // Attachments
+  attachments    Json?    // [{ name, url, size, type }]
+
+  // Status
+  status         MessageStatus @default(SENT)
+  readAt         DateTime?
+
+  // Reply to
+  replyToId      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([patientId])
+  @@index([status])
+}
+
+// ============================================
+// TRACKING & LOGS
+// ============================================
+
+model WeightLog {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  weight    Float    // kg
+  bmi       Float?
+  bodyFat   Float?   // percentage
+
+  // Measurements (optional)
+  chest     Float?   // cm
+  waist     Float?   // cm
+  hips      Float?   // cm
+  thigh     Float?   // cm
+  arm       Float?   // cm
+
+  notes     String?
+
+  logDate   DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+  @@index([logDate])
+}
+
+model FoodLog {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  // Meal info
+  mealType  MealType
+  mealTime  DateTime
+
+  // Food
+  foodName  String
+  amount    Float
+  unit      String
+
+  // Nutrition
+  calories  Float?
+  protein   Float?
+  carbs     Float?
+  fat       Float?
+
+  // Photo
+  photoUrl  String?
+
+  notes     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+  @@index([mealTime])
+}
+
+model LabResult {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  // Test info
+  testType  LabTestType
+  testName  String
+  testDate  DateTime
+
+  // Results (JSON for flexibility)
+  results   Json     // { "glucose": 95, "cholesterol": 180, ... }
+
+  // Files
+  fileUrl   String?
+
+  // Interpretation
+  notes     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+  @@index([testDate])
+}
+
+// ============================================
+// PAYMENTS & BILLING
+// ============================================
+
+model Payment {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Amount
+  amount         Float
+  currency       String   @default("TRY")
+
+  // Plan
+  plan           SubscriptionPlan
+  billingPeriod  String   // "monthly", "yearly"
+
+  // Status
+  status         PaymentStatus @default(PENDING)
+  method         PaymentMethod
+
+  // Payment provider
+  stripePaymentIntentId String?
+  iyzicoPaymentId       String?
+
+  // Transaction details
+  transactionId  String?
+  receiptUrl     String?
+
+  // Metadata
+  metadata       Json?
+
+  // Invoice
+  invoiceId      String?
+  invoice        Invoice? @relation(fields: [invoiceId], references: [id])
+
+  paidAt         DateTime?
+  failedAt       DateTime?
+  refundedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Invoice number
+  invoiceNumber  String   @unique
+
+  // Amount
+  subtotal       Float
+  tax            Float
+  total          Float
+  currency       String   @default("TRY")
+
+  // Period
+  periodStart    DateTime
+  periodEnd      DateTime
+
+  // Status
+  status         PaymentStatus @default(PENDING)
+
+  // Billing details
+  billingName    String
+  billingEmail   String
+  billingAddress String?
+  taxId          String?  // Turkish tax number
+
+  // PDF
+  pdfUrl         String?
+
+  // Relations
+  payments       Payment[]
+
+  issuedAt       DateTime @default(now())
+  dueDate        DateTime
+  paidAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([invoiceNumber])
+  @@index([status])
+}
+
+// ============================================
+// AI & ADMIN
+// ============================================
+
+model AiQueryLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Query
+  queryType      String   // "diet_plan", "meal_suggestion", "nutrition_analysis", etc.
+  prompt         String
+
+  // AI model
+  model          String   // "gpt-4", "claude-3-opus", etc.
+  provider       String   // "openai", "anthropic"
+
+  // Response
+  response       String
+  tokensUsed     Int?
+  cost           Float?   // USD
+
+  // Context
+  patientId      String?
+  dietPlanId     String?
+
+  // Performance
+  responseTime   Int?     // milliseconds
+
+  // Status
+  success        Boolean  @default(true)
+  error          String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([queryType])
+  @@index([createdAt])
+}
+
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  // Action
+  action    String   // "user.create", "organization.update", "payment.refund", etc.
+  resource  String   // "User", "Organization", "Payment", etc.
+  resourceId String?
+
+  // Details
+  changes   Json?    // { before: {}, after: {} }
+  metadata  Json?
+
+  // Context
+  ipAddress String
+  userAgent String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model SecurityLog {
+  id        String   @id @default(cuid())
+
+  // Event
+  event     String   // "login.failed", "password.reset", "session.expired", etc.
+  severity  String   // "low", "medium", "high", "critical"
+
+  // User context
+  userId    String?
+  email     String?
+
+  // Details
+  details   Json?
+
+  // Context
+  ipAddress String
+  userAgent String?
+
+  // Status
+  blocked   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([event])
+  @@index([severity])
+  @@index([userId])
+  @@index([createdAt])
+}
